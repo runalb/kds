@@ -3413,77 +3413,74 @@ __webpack_require__.r(__webpack_exports__);
 var SocketconfigService = /** @class */ (function () {
     function SocketconfigService(mdlSnackbarService) {
         this.mdlSnackbarService = mdlSnackbarService;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 5000; // 5 seconds
+        this.MAX_RETRY_ATTEMPTS = 3;
+        this.retryCount = 0;
         this.initializeSocket();
     }
     SocketconfigService.prototype.initializeSocket = function () {
+        var _this = this;
         var ipAddress = this.getIpaddress();
         if (!ipAddress) {
-            this.showSnackbar("Please set the POS IP address in settings");
+            this.showSnackbar("No IP address configured. Please set the IP address first.");
             return;
         }
-        var socketServerUrl = "http://" + ipAddress + ":7000";
-        console.log('Socket Server URL:', socketServerUrl);
+        // Check if the IP address is an ngrok URL
+        var isNgrokUrl = ipAddress.includes('ngrok.io');
+        var socketServerUrl;
+        if (isNgrokUrl) {
+            // If it's an ngrok URL, use https
+            socketServerUrl = "https://" + ipAddress;
+            console.log('Using ngrok URL:', socketServerUrl);
+        }
+        else {
+            // For local IP, use http
+            socketServerUrl = "http://" + ipAddress + ":7000";
+            console.log('Using local IP:', socketServerUrl);
+        }
         try {
             this.socket = socket_io_client__WEBPACK_IMPORTED_MODULE_2__(socketServerUrl, {
                 reconnection: true,
-                reconnectionAttempts: this.maxReconnectAttempts,
-                reconnectionDelay: this.reconnectDelay,
+                reconnectionAttempts: this.MAX_RETRY_ATTEMPTS,
+                reconnectionDelay: 1000,
                 timeout: 10000,
-                transports: ['websocket', 'polling']
+                transports: ['websocket', 'polling'],
+                secure: isNgrokUrl // Use secure connection for ngrok
             });
-            this.setupSocketListeners();
+            this.socket.on('connect', function () {
+                console.log('Socket connected successfully');
+                _this.showSnackbar("KDS Connected Successfully!");
+                _this.socket.emit("Check-Exist-Order");
+                _this.retryCount = 0;
+            });
+            this.socket.on('connect_error', function (error) {
+                console.error('Socket connection error:', error);
+                _this.retryCount++;
+                if (_this.retryCount >= _this.MAX_RETRY_ATTEMPTS) {
+                    _this.showSnackbar("Failed to connect to POS server. Please check if ngrok is running and the URL is correct.");
+                }
+                else {
+                    _this.showSnackbar("Connection attempt " + _this.retryCount + " of " + _this.MAX_RETRY_ATTEMPTS + " failed. Retrying...");
+                }
+            });
+            this.socket.on('disconnect', function () {
+                console.log('Socket disconnected');
+                _this.showSnackbar("KDS Disconnected! Please check POS or Network Connection");
+            });
         }
         catch (error) {
-            console.error('Failed to initialize socket:', error);
-            this.showSnackbar("Failed to initialize connection. Please check your network settings.");
+            console.error('An error occurred while connecting to the socket server:', error);
+            this.showSnackbar("Network Connection Error! Please check your network configuration");
         }
-    };
-    SocketconfigService.prototype.setupSocketListeners = function () {
-        var _this = this;
-        this.socket.on('connect', function () {
-            console.log('Socket connected successfully');
-            _this.reconnectAttempts = 0;
-            _this.showSnackbar("KDS Connected Successfully!");
-            _this.socket.emit("Check-Exist-Order");
-        });
-        this.socket.on('connect_error', function (error) {
-            console.error('Socket connection error:', error);
-            _this.reconnectAttempts++;
-            if (_this.reconnectAttempts <= _this.maxReconnectAttempts) {
-                _this.showSnackbar("Connection error. Attempting to reconnect (" + _this.reconnectAttempts + "/" + _this.maxReconnectAttempts + ")...");
-            }
-            else {
-                _this.showSnackbar("Failed to connect to server. Please check your network connection and try again.");
-            }
-        });
-        this.socket.on('disconnect', function (reason) {
-            console.log('Socket disconnected:', reason);
-            _this.showSnackbar("KDS Disconnected! Please check your network connection.");
-        });
-        this.socket.on('reconnect', function (attemptNumber) {
-            console.log('Socket reconnected after', attemptNumber, 'attempts');
-            _this.showSnackbar("KDS Reconnected Successfully!");
-        });
-        this.socket.on('reconnect_error', function (error) {
-            console.error('Socket reconnection error:', error);
-        });
-        this.socket.on('reconnect_failed', function () {
-            console.error('Socket reconnection failed after all attempts');
-            _this.showSnackbar("Failed to reconnect to server. Please refresh the page.");
-        });
     };
     SocketconfigService.prototype.getSocketConnection = function () {
         return this.socket;
     };
     SocketconfigService.prototype.selectipaddress = function (soketIpValue) {
         localStorage.setItem('ipAddress', soketIpValue);
-        // Reinitialize socket with new IP
-        this.initializeSocket();
+        console.log("called");
     };
     SocketconfigService.prototype.getIpaddress = function () {
+        console.log("get called");
         return localStorage.getItem('ipAddress');
     };
     SocketconfigService.prototype.showSnackbar = function (msg) {
@@ -3523,8 +3520,7 @@ __webpack_require__.r(__webpack_exports__);
 // The list of file replacements can be found in `angular.json`.
 
 var environment = {
-    production: false,
-    socketServerUrl: 'http://192.168.0.201:7000' // Default local development URL
+    production: false
 };
 /*
  * For easier debugging in development mode, you can import the following file
