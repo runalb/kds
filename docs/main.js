@@ -366,15 +366,24 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "AppComponent", function() { return AppComponent; });
 /* harmony import */ var tslib__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.es6.js");
 /* harmony import */ var _angular_core__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @angular/core */ "./node_modules/@angular/core/fesm5/core.js");
+/* harmony import */ var _service_socketconfig_service__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./service/socketconfig.service */ "./src/app/service/socketconfig.service.ts");
+
 
 
 var AppComponent = /** @class */ (function () {
-    function AppComponent() {
+    function AppComponent(viewContainerRef, socketService) {
+        this.viewContainerRef = viewContainerRef;
+        this.socketService = socketService;
         this.title = 'kdssocket';
+        this.socketService.setViewContainerRef(viewContainerRef);
     }
     AppComponent.prototype.ngOnInit = function () {
         // this.SoketIpDialogshow();
     };
+    AppComponent.ctorParameters = function () { return [
+        { type: _angular_core__WEBPACK_IMPORTED_MODULE_1__["ViewContainerRef"] },
+        { type: _service_socketconfig_service__WEBPACK_IMPORTED_MODULE_2__["SocketconfigService"] }
+    ]; };
     AppComponent = tslib__WEBPACK_IMPORTED_MODULE_0__["__decorate"]([
         Object(_angular_core__WEBPACK_IMPORTED_MODULE_1__["Component"])({
             selector: 'app-root',
@@ -3412,39 +3421,51 @@ __webpack_require__.r(__webpack_exports__);
 
 var SocketconfigService = /** @class */ (function () {
     function SocketconfigService(mdlSnackbarService) {
+        var _this = this;
         this.mdlSnackbarService = mdlSnackbarService;
         this.MAX_RETRY_ATTEMPTS = 3;
         this.retryCount = 0;
-        this.initializeSocket();
+        // Initialize socket after a short delay to ensure ViewContainerRef is available
+        setTimeout(function () {
+            _this.initializeSocket();
+        }, 0);
     }
+    SocketconfigService.prototype.setViewContainerRef = function (viewContainerRef) {
+        this.viewContainerRef = viewContainerRef;
+        // The MdlSnackbarService will automatically use the ViewContainerRef from the component
+    };
     SocketconfigService.prototype.initializeSocket = function () {
-        var _this = this;
         var ipAddress = this.getIpaddress();
         if (!ipAddress) {
             this.showSnackbar("No IP address configured. Please set the IP address first.");
             return;
         }
-        // Check if the IP address is an ngrok URL
-        var isNgrokUrl = ipAddress.includes('ngrok.io');
-        var socketServerUrl;
-        if (isNgrokUrl) {
-            // If it's an ngrok URL, use https
-            socketServerUrl = "https://" + ipAddress;
-            console.log('Using ngrok URL:', socketServerUrl);
+        // Try different connection methods
+        var connectionMethods = [
+            // Method 1: Direct IP
+            "http://" + ipAddress + ":7000",
+            // Method 2: Using hostname (if IP is a hostname)
+            "http://" + ipAddress + ".local:7000",
+            // Method 3: Using localhost if IP is 127.0.0.1
+            ipAddress === '127.0.0.1' ? 'http://localhost:7000' : null
+        ].filter(Boolean); // Remove null values
+        this.tryConnect(connectionMethods, 2);
+    };
+    SocketconfigService.prototype.tryConnect = function (methods, index) {
+        var _this = this;
+        if (index >= methods.length) {
+            this.showSnackbar("All connection methods failed. Please check your network configuration.");
+            return;
         }
-        else {
-            // For local IP, use http
-            socketServerUrl = "http://" + ipAddress + ":7000";
-            console.log('Using local IP:', socketServerUrl);
-        }
+        var socketServerUrl = methods[index];
+        console.log("Attempting connection method " + (index + 1) + ":", socketServerUrl);
         try {
             this.socket = socket_io_client__WEBPACK_IMPORTED_MODULE_2__(socketServerUrl, {
                 reconnection: true,
                 reconnectionAttempts: this.MAX_RETRY_ATTEMPTS,
                 reconnectionDelay: 1000,
                 timeout: 10000,
-                transports: ['websocket', 'polling'],
-                secure: isNgrokUrl // Use secure connection for ngrok
+                transports: ['websocket', 'polling']
             });
             this.socket.on('connect', function () {
                 console.log('Socket connected successfully');
@@ -3456,7 +3477,9 @@ var SocketconfigService = /** @class */ (function () {
                 console.error('Socket connection error:', error);
                 _this.retryCount++;
                 if (_this.retryCount >= _this.MAX_RETRY_ATTEMPTS) {
-                    _this.showSnackbar("Failed to connect to POS server. Please check if ngrok is running and the URL is correct.");
+                    // Try next connection method
+                    _this.socket.disconnect();
+                    _this.tryConnect(methods, index + 1);
                 }
                 else {
                     _this.showSnackbar("Connection attempt " + _this.retryCount + " of " + _this.MAX_RETRY_ATTEMPTS + " failed. Retrying...");
@@ -3469,7 +3492,8 @@ var SocketconfigService = /** @class */ (function () {
         }
         catch (error) {
             console.error('An error occurred while connecting to the socket server:', error);
-            this.showSnackbar("Network Connection Error! Please check your network configuration");
+            // Try next connection method
+            this.tryConnect(methods, index + 1);
         }
     };
     SocketconfigService.prototype.getSocketConnection = function () {
@@ -3484,6 +3508,10 @@ var SocketconfigService = /** @class */ (function () {
         return localStorage.getItem('ipAddress');
     };
     SocketconfigService.prototype.showSnackbar = function (msg) {
+        if (!this.viewContainerRef) {
+            console.warn('ViewContainerRef not set for MdlSnackbarService');
+            return;
+        }
         this.mdlSnackbarService.showSnackbar({
             message: msg,
             timeout: 10000
