@@ -3412,42 +3412,78 @@ __webpack_require__.r(__webpack_exports__);
 
 var SocketconfigService = /** @class */ (function () {
     function SocketconfigService(mdlSnackbarService) {
-        var _this = this;
         this.mdlSnackbarService = mdlSnackbarService;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 5000; // 5 seconds
+        this.initializeSocket();
+    }
+    SocketconfigService.prototype.initializeSocket = function () {
         var ipAddress = this.getIpaddress();
+        if (!ipAddress) {
+            this.showSnackbar("Please set the POS IP address in settings");
+            return;
+        }
         var socketServerUrl = "http://" + ipAddress + ":7000";
-        console.log('socketServerUrl - ', socketServerUrl);
-        // this.socket = io(socketServerUrl);
+        console.log('Socket Server URL:', socketServerUrl);
         try {
-            this.socket = socket_io_client__WEBPACK_IMPORTED_MODULE_2__(socketServerUrl);
-            this.socket.on('connect', function () {
-                console.log('Socket connected successfully');
-                _this.showSnackbar("KDS Connected Successfully!");
-                _this.socket.emit("Check-Exist-Order");
+            this.socket = socket_io_client__WEBPACK_IMPORTED_MODULE_2__(socketServerUrl, {
+                reconnection: true,
+                reconnectionAttempts: this.maxReconnectAttempts,
+                reconnectionDelay: this.reconnectDelay,
+                timeout: 10000,
+                transports: ['websocket', 'polling']
             });
-            this.socket.on('connect_error', function (error) {
-                console.error('Socket connection error:', error);
-                _this.showSnackbar("Network Connection Error! Reconnecting to POS Application");
-            });
-            this.socket.on('disconnect', function () {
-                console.log('Socket disconnected');
-                _this.showSnackbar("KDS Disconnected! Please check POS or Network Connection");
-            });
+            this.setupSocketListeners();
         }
         catch (error) {
-            console.error('An error occurred while connecting to the socket server:', error);
-            this.showSnackbar("Network Connection Error! Reconnecting to POS Application");
+            console.error('Failed to initialize socket:', error);
+            this.showSnackbar("Failed to initialize connection. Please check your network settings.");
         }
-    }
+    };
+    SocketconfigService.prototype.setupSocketListeners = function () {
+        var _this = this;
+        this.socket.on('connect', function () {
+            console.log('Socket connected successfully');
+            _this.reconnectAttempts = 0;
+            _this.showSnackbar("KDS Connected Successfully!");
+            _this.socket.emit("Check-Exist-Order");
+        });
+        this.socket.on('connect_error', function (error) {
+            console.error('Socket connection error:', error);
+            _this.reconnectAttempts++;
+            if (_this.reconnectAttempts <= _this.maxReconnectAttempts) {
+                _this.showSnackbar("Connection error. Attempting to reconnect (" + _this.reconnectAttempts + "/" + _this.maxReconnectAttempts + ")...");
+            }
+            else {
+                _this.showSnackbar("Failed to connect to server. Please check your network connection and try again.");
+            }
+        });
+        this.socket.on('disconnect', function (reason) {
+            console.log('Socket disconnected:', reason);
+            _this.showSnackbar("KDS Disconnected! Please check your network connection.");
+        });
+        this.socket.on('reconnect', function (attemptNumber) {
+            console.log('Socket reconnected after', attemptNumber, 'attempts');
+            _this.showSnackbar("KDS Reconnected Successfully!");
+        });
+        this.socket.on('reconnect_error', function (error) {
+            console.error('Socket reconnection error:', error);
+        });
+        this.socket.on('reconnect_failed', function () {
+            console.error('Socket reconnection failed after all attempts');
+            _this.showSnackbar("Failed to reconnect to server. Please refresh the page.");
+        });
+    };
     SocketconfigService.prototype.getSocketConnection = function () {
         return this.socket;
     };
     SocketconfigService.prototype.selectipaddress = function (soketIpValue) {
         localStorage.setItem('ipAddress', soketIpValue);
-        console.log("called");
+        // Reinitialize socket with new IP
+        this.initializeSocket();
     };
     SocketconfigService.prototype.getIpaddress = function () {
-        console.log("get called");
         return localStorage.getItem('ipAddress');
     };
     SocketconfigService.prototype.showSnackbar = function (msg) {
@@ -3487,7 +3523,8 @@ __webpack_require__.r(__webpack_exports__);
 // The list of file replacements can be found in `angular.json`.
 
 var environment = {
-    production: false
+    production: false,
+    socketServerUrl: 'http://192.168.0.201:7000' // Default local development URL
 };
 /*
  * For easier debugging in development mode, you can import the following file
